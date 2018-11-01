@@ -535,8 +535,6 @@ func (self *Conn) readConnect() (err error) {
 
 		}
 	}
-
-	return
 }
 
 func (self *Conn) checkConnectResult() (ok bool, errmsg string) {
@@ -792,8 +790,6 @@ func (self *Conn) ReadPacket() (pkt av.Packet, err error) {
 			return
 		}
 	}
-
-	return
 }
 
 func (self *Conn) Prepare() (err error) {
@@ -865,7 +861,7 @@ func (self *Conn) WritePacket(pkt av.Packet) (err error) {
 		fmt.Println("rtmp: WritePacket", pkt.Idx, pkt.Time, pkt.CompositionTime)
 	}
 
-	if err = self.writeAVTag(tag, int32(timestamp)); err != nil {
+	if err = self.writeAVTag(tag, uint32(timestamp)); err != nil {
 		return
 	}
 
@@ -923,7 +919,7 @@ func (self *Conn) tmpwbuf(n int) []byte {
 
 func (self *Conn) writeSetChunkSize(size int) (err error) {
 	self.writeMaxChunkSize = size
-	b := self.tmpwbuf(chunkHeaderLength + 4)
+	b := self.tmpwbuf(chunkHeaderLength(0) + 4)
 	n := self.fillChunkHeader(b, 2, 0, msgtypeidSetChunkSize, 0, 4)
 	pio.PutU32BE(b[n:], uint32(size))
 	n += 4
@@ -932,7 +928,7 @@ func (self *Conn) writeSetChunkSize(size int) (err error) {
 }
 
 func (self *Conn) writeAck(seqnum uint32) (err error) {
-	b := self.tmpwbuf(chunkHeaderLength + 4)
+	b := self.tmpwbuf(chunkHeaderLength(0) + 4)
 	n := self.fillChunkHeader(b, 2, 0, msgtypeidAck, 0, 4)
 	pio.PutU32BE(b[n:], seqnum)
 	n += 4
@@ -941,7 +937,7 @@ func (self *Conn) writeAck(seqnum uint32) (err error) {
 }
 
 func (self *Conn) writeWindowAckSize(size uint32) (err error) {
-	b := self.tmpwbuf(chunkHeaderLength + 4)
+	b := self.tmpwbuf(chunkHeaderLength(0) + 4)
 	n := self.fillChunkHeader(b, 2, 0, msgtypeidWindowAckSize, 0, 4)
 	pio.PutU32BE(b[n:], size)
 	n += 4
@@ -950,7 +946,7 @@ func (self *Conn) writeWindowAckSize(size uint32) (err error) {
 }
 
 func (self *Conn) writeSetPeerBandwidth(acksize uint32, limittype uint8) (err error) {
-	b := self.tmpwbuf(chunkHeaderLength + 5)
+	b := self.tmpwbuf(chunkHeaderLength(0) + 5)
 	n := self.fillChunkHeader(b, 2, 0, msgtypeidSetPeerBandwidth, 0, 5)
 	pio.PutU32BE(b[n:], acksize)
 	n += 4
@@ -974,7 +970,7 @@ func (self *Conn) writeAMF0Msg(msgtypeid uint8, csid, msgsid uint32, args ...int
 		size += flvio.LenAMF0Val(arg)
 	}
 
-	b := self.tmpwbuf(chunkHeaderLength + size)
+	b := self.tmpwbuf(chunkHeaderLength(0) + size)
 	n := self.fillChunkHeader(b, csid, 0, msgtypeid, msgsid, size)
 	for _, arg := range args {
 		n += flvio.FillAMF0Val(b[n:], arg)
@@ -984,7 +980,7 @@ func (self *Conn) writeAMF0Msg(msgtypeid uint8, csid, msgsid uint32, args ...int
 	return
 }
 
-func (self *Conn) writeAVTag(tag flvio.Tag, ts int32) (err error) {
+func (self *Conn) writeAVTag(tag flvio.Tag, ts uint32) (err error) {
 	var msgtypeid uint8
 	var csid uint32
 	var data []byte
@@ -1001,15 +997,11 @@ func (self *Conn) writeAVTag(tag flvio.Tag, ts int32) (err error) {
 		data = tag.Data
 	}
 
-	actualChunkHeaderLength := chunkHeaderLength
-	if uint32(ts) > FlvTimestampMax {
-		actualChunkHeaderLength += 4
-	}
-
-	b := self.tmpwbuf(actualChunkHeaderLength + flvio.MaxTagSubHeaderLength)
-	hdrlen := tag.FillHeader(b[actualChunkHeaderLength:])
+	chunkhdrlen := chunkHeaderLength(ts)
+	b := self.tmpwbuf(chunkhdrlen + flvio.MaxTagSubHeaderLength)
+	hdrlen := tag.FillHeader(b[chunkhdrlen:])
 	self.fillChunkHeader(b, csid, ts, msgtypeid, self.avmsgsid, hdrlen+len(data))
-	n := hdrlen + actualChunkHeaderLength
+	n := hdrlen + chunkhdrlen
 
 	if n+len(data) > self.writeMaxChunkSize {
 		if err = self.writeSetChunkSize(n + len(data)); err != nil {
@@ -1025,7 +1017,7 @@ func (self *Conn) writeAVTag(tag flvio.Tag, ts int32) (err error) {
 }
 
 func (self *Conn) writeStreamBegin(msgsid uint32) (err error) {
-	b := self.tmpwbuf(chunkHeaderLength + 6)
+	b := self.tmpwbuf(chunkHeaderLength(0) + 6)
 	n := self.fillChunkHeader(b, 2, 0, msgtypeidUserControl, 0, 6)
 	pio.PutU16BE(b[n:], eventtypeStreamBegin)
 	n += 2
@@ -1036,7 +1028,8 @@ func (self *Conn) writeStreamBegin(msgsid uint32) (err error) {
 }
 
 func (self *Conn) writeSetBufferLength(msgsid uint32, timestamp uint32) (err error) {
-	b := self.tmpwbuf(chunkHeaderLength + 10)
+	// TODO: why timestamp isn't passed to chunk header?
+	b := self.tmpwbuf(chunkHeaderLength(0) + 10)
 	n := self.fillChunkHeader(b, 2, 0, msgtypeidUserControl, 0, 10)
 	pio.PutU16BE(b[n:], eventtypeSetBufferLength)
 	n += 2
@@ -1048,10 +1041,22 @@ func (self *Conn) writeSetBufferLength(msgsid uint32, timestamp uint32) (err err
 	return
 }
 
-const chunkHeaderLength = 12
-const FlvTimestampMax = 0xFFFFFF
+func chunkHeaderLength(timestamp uint32) int {
+	if timestamp < 0xffffff {
+		return 12
+	} else {
+		return 16
+	}
+}
 
-func (self *Conn) fillChunkHeader(b []byte, csid uint32, timestamp int32, msgtypeid uint8, msgsid uint32, msgdatalen int) (n int) {
+func (self *Conn) fillChunkHeader(b []byte, csid uint32, timestamp uint32, msgtypeid uint8, msgsid uint32, msgdatalen int) (n int) {
+	//    0 1 2 3 4 5 6 7
+	//   +-+-+-+-+-+-+-+-+
+	//   |fmt|   cs id   |
+	//   +-+-+-+-+-+-+-+-+
+	//
+	// Chunk basic header 1
+
 	//  0                   1                   2                   3
 	//  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 	// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -1064,24 +1069,40 @@ func (self *Conn) fillChunkHeader(b []byte, csid uint32, timestamp int32, msgtyp
 	//
 	//       Figure 9 Chunk Message Header – Type 0
 
+	// TODO: support basic header type 1 and 2 encoding
+	// basic header (type 0)
 	b[n] = byte(csid) & 0x3f
 	n++
-	if uint32(timestamp) <= FlvTimestampMax {
-		pio.PutU24BE(b[n:], uint32(timestamp))
+
+	// timestamp
+	var ts uint32
+	if timestamp < 0xffffff {
+		ts = timestamp
 	} else {
-		pio.PutU24BE(b[n:], FlvTimestampMax)
+		ts = 0xffffff
 	}
+	pio.PutU24BE(b[n:], ts)
 	n += 3
+
+	// message length
 	pio.PutU24BE(b[n:], uint32(msgdatalen))
 	n += 3
+
+	// message type id
 	b[n] = msgtypeid
 	n++
+
+	// message stream id
 	pio.PutU32LE(b[n:], msgsid)
 	n += 4
-	if uint32(timestamp) > FlvTimestampMax {
+
+	// extended timestamp
+	if ts == 0xffffff {
 		pio.PutU32BE(b[n:], uint32(timestamp))
 		n += 4
 	}
+
+	// TODO: handle timestamp wraps
 
 	if Debug {
 		fmt.Printf("rtmp: write chunk msgdatalen=%d msgsid=%d\n", msgdatalen, msgsid)
